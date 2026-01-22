@@ -1,0 +1,29 @@
+name: Confluence Space Backup
+
+on:
+  schedule:
+    - cron: '0 13 * * *' # Runs daily at 6:00 AM EST
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    - name: Run Backup Script
+      env:
+        CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+        CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+        GCP_SA_KEY: ${{ secrets.GCP_CREDENTIALS }}
+      run: python backup_space.py
