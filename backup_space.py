@@ -1,29 +1,128 @@
-name: Confluence Space Backup
+import os
+import json
+import shutil
+import datetime
+from atlassian import Confluence
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
-on:
-  schedule:
-    - cron: '0 11 * * *' # Runs daily at 6:00 AM EST
-  workflow_dispatch:
+# ==========================================
+# 🔐 1. CREDENTIALS
+# ==========================================
+CONFLUENCE_URL = 'https://tinuiti.atlassian.net/'
+CONFLUENCE_EMAIL = os.environ.get('CONFLUENCE_EMAIL')
+CONFLUENCE_API_TOKEN = os.environ.get('CONFLUENCE_API_TOKEN')
+SPACE_KEY = "HFS"
 
-jobs:
-  backup:
-    runs-on: ubuntu-latest
+# --- NEW FOLDER ID ---
+FOLDER_ID = '1CxzhAAlx4ekH1il9DVoJsUeKSEGpPI6K'
 
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+GCP_SA_KEY = os.environ.get('GCP_SA_KEY')
+if not GCP_SA_KEY:
+    raise ValueError("Missing GCP_SA_KEY (check GitHub Secrets)")
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+# ==========================================
+# 🛠️ SERVICE SETUP
+# ==========================================
+def get_confluence():
+    return Confluence(url=CONFLUENCE_URL, username=CONFLUENCE_EMAIL, password=CONFLUENCE_API_TOKEN)
 
-    - name: Install dependencies
-      run: pip install -r requirements.txt
+def get_drive_service():
+    print("🔑 Authenticating Service Account...")
+    creds_dict = json.loads(GCP_SA_KEY)
+    creds = service_account.Credentials.from_service_account_info(
+        creds_dict, scopes=['https://www.googleapis.com/auth/drive']
+    )
+    return build('drive', 'v3', credentials=creds)
 
-    - name: Run Backup Script
-      env:
-        CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
-        CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
-        GCP_SA_KEY: ${{ secrets.GCP_CREDENTIALS }}
-      run: python backup_space.py
+def upload_zip(service, filepath, filename, folder_id):
+    # 1. Search (Supports Shared Drives)
+    query = f"name = '{filename}' and '{folder_id}' in parents and trashed = false"
+    results = service.files().list(
+        q=query, 
+        fields="files(id)", 
+        includeItemsFromAllDrives=True, 
+        supportsAllDrives=True
+    ).execute()
+    files = results.get('files', [])
+
+    media = MediaFileUpload(filepath, mimetype='application/zip')
+
+    # 2. Upload/Update (Supports Shared Drives)
+    if files:
+        service.files().update(
+            fileId=files[0]['id'], 
+            media_body=media, 
+            supportsAllDrives=True
+        ).execute()
+        print(f"      🔄 Overwrote existing backup: {filename}")
+    else:
+        metadata = {'name': filename, 'parents': [folder_id]}
+        service.files().create(
+            body=metadata, 
+            media_body=media, 
+            supportsAllDrives=True
+        ).execute()
+        print(f"      ✅ Uploaded new backup: {filename}")
+
+# ==========================================
+# 🚀 MAIN LOGIC
+# ==========================================
+def run_backup():
+    confluence = get_confluence()
+    drive = get_drive_service()
+    
+    # Create a dated folder for this run
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    backup_dir = f"backup_{SPACE_KEY}_{date_str}"
+    os.makedirs(backup_dir, exist_ok=True)
+    
+    print(f"🚀 Starting Backup for Space: {SPACE_KEY}")
+
+    # Loop through pages 
+    start = 0
+    limit = 50
+    total_pages = 0
+    
+    while True:
+        print(f"   ...downloading batch {start} - {start + limit}...")
+        pages = confluence.get_all_pages_from_space(
+            SPACE_KEY, start=start, limit=limit, expand='body.storage'
+        )
+        
+        if not pages:
+            break
+            
+        for page in pages:
+            # Sanitize Title
+            safe_title = "".join([c for c in page['title'] if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+            page_id = page['id']
+            content = page['body']['storage']['value']
+            
+            filename = f"{page_id} - {safe_title}.html"
+            file_path = os.path.join(backup_dir, filename)
+            
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(f"\n")
+                f.write(content)
+            
+            total_pages += 1
+            
+        start += limit
+
+    print(f"📦 Downloaded {total_pages} pages.")
+
+    # Zip the folder
+    print("🗜️ Zipping files...")
+    shutil.make_archive(backup_dir, 'zip', backup_dir)
+    zip_filename = f"{backup_dir}.zip"
+    
+    # Upload
+    print(f"☁️ Uploading {zip_filename}...")
+    upload_zip(drive, zip_filename, zip_filename, FOLDER_ID)
+    
+    print("🎉 Backup Complete.")
+
+if __name__ == "__main__":
+    run_backup()
