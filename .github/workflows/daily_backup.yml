@@ -2,7 +2,7 @@ name: Confluence Space Backup
 
 on:
   schedule:
-    - cron: '0 13 * * *' # Runs daily at 6:00 AM EST
+    - cron: '0 13 * * *' # Runs daily at 8:00 AM EST
   workflow_dispatch:
 
 jobs:
