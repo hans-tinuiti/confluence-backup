@@ -15,7 +15,7 @@ CONFLUENCE_EMAIL = os.environ.get('CONFLUENCE_EMAIL')
 CONFLUENCE_API_TOKEN = os.environ.get('CONFLUENCE_API_TOKEN')
 SPACE_KEY = "HFS"
 
-# --- NEW FOLDER ID ---
+# Destination Folder ID (Your updated one)
 FOLDER_ID = '1CxzhAAlx4ekH1il9DVoJsUeKSEGpPI6K'
 
 GCP_SA_KEY = os.environ.get('GCP_SA_KEY')
@@ -73,10 +73,12 @@ def run_backup():
     confluence = get_confluence()
     drive = get_drive_service()
     
-    # Create a dated folder for this run
+    # --- NAMING CHANGE HERE ---
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    backup_dir = f"backup_{SPACE_KEY}_{date_str}"
-    os.makedirs(backup_dir, exist_ok=True)
+    backup_name = f"RSM_Confluence_Daily_Backup_{date_str}"
+    
+    # We create a local folder with this name first
+    os.makedirs(backup_name, exist_ok=True)
     
     print(f"🚀 Starting Backup for Space: {SPACE_KEY}")
 
@@ -101,7 +103,7 @@ def run_backup():
             content = page['body']['storage']['value']
             
             filename = f"{page_id} - {safe_title}.html"
-            file_path = os.path.join(backup_dir, filename)
+            file_path = os.path.join(backup_name, filename)
             
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(f"\n")
@@ -115,8 +117,8 @@ def run_backup():
 
     # Zip the folder
     print("🗜️ Zipping files...")
-    shutil.make_archive(backup_dir, 'zip', backup_dir)
-    zip_filename = f"{backup_dir}.zip"
+    shutil.make_archive(backup_name, 'zip', backup_name)
+    zip_filename = f"{backup_name}.zip"
     
     # Upload
     print(f"☁️ Uploading {zip_filename}...")
